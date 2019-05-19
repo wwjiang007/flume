@@ -18,6 +18,7 @@
  */
 package org.apache.flume.test.agent;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.flume.test.util.StagedInstall;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.alias.CredentialShell;
@@ -32,9 +33,14 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Scanner;
 import java.util.Set;
@@ -43,9 +49,9 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-public class TestConfigFilters {
+public class TestConfig {
   private static final Logger LOGGER =
-      LoggerFactory.getLogger(TestConfigFilters.class);
+      LoggerFactory.getLogger(TestConfig.class);
 
   @ClassRule
   public static final EnvironmentVariables environmentVariables
@@ -53,6 +59,7 @@ public class TestConfigFilters {
 
   private Properties agentProps;
   private Map<String, String> agentEnv;
+  private Map<String, String> agentOptions;
   private File sinkOutputDir1;
   private File sinkOutputDir2;
   private File sinkOutputDir3;
@@ -64,11 +71,16 @@ public class TestConfigFilters {
     File agentDir = StagedInstall.getInstance().getStageDir();
     LOGGER.debug("Using agent stage dir: {}", agentDir);
 
-    File testDir = new File(agentDir, TestConfigFilters.class.getName());
+    File testDir = new File(agentDir, TestConfig.class.getName());
+    if (testDir.exists()) {
+      FileUtils.deleteDirectory(testDir);
+    }
     assertTrue(testDir.mkdirs());
 
     agentProps = new Properties();
     agentEnv = new HashMap<>();
+    agentOptions = new HashMap<>();
+    agentOptions.put("-C", getAdditionalClassPath());
 
     // Create the rest of the properties file
     agentProps.put("agent.sources.seq-01.type", "seq");
@@ -131,6 +143,12 @@ public class TestConfigFilters {
     agentProps.put("agent.configfilters", "filter-01 filter-02 filter-03");
   }
 
+  private String getAdditionalClassPath() throws Exception {
+    URL resource = this.getClass().getClassLoader().getResource("classpath.txt");
+    Path path = Paths.get(Objects.requireNonNull(resource).getPath());
+    return Files.readAllLines(path).stream().findFirst().orElse("");
+  }
+
   @After
   public void teardown() throws Exception {
     StagedInstall.getInstance().stopAgent();
@@ -160,7 +178,7 @@ public class TestConfigFilters {
   public void testConfigReplacement() throws Exception {
     LOGGER.debug("testConfigReplacement() started.");
 
-    StagedInstall.getInstance().startAgent("agent", agentProps, agentEnv);
+    StagedInstall.getInstance().startAgent("agent", agentProps, agentEnv, agentOptions);
 
     TimeUnit.SECONDS.sleep(10); // Wait for sources and sink to process files
 
@@ -169,6 +187,35 @@ public class TestConfigFilters {
     validateSeenEvents(sinkOutputDir2, 1, 100);
     validateSeenEvents(sinkOutputDir3, 1, 100);
     LOGGER.debug("Processed all the events!");
+
+    LOGGER.debug("testConfigReplacement() ended.");
+  }
+
+  @Test
+  public void testConfigReload() throws Exception {
+    LOGGER.debug("testConfigReplacement() started.");
+
+    agentProps.put("agent.channels.mem-01.transactionCapacity", "10");
+    agentProps.put("agent.sinks.roll-01.sink.batchSize", "20");
+    StagedInstall.getInstance().startAgent("agent", agentProps, agentEnv, agentOptions);
+
+    TimeUnit.SECONDS.sleep(10); // Wait for sources and sink to process files
+
+    // This directory is empty due to misconfiguration
+    validateSeenEvents(sinkOutputDir1, 0, 0);
+
+    // These are well configured
+    validateSeenEvents(sinkOutputDir2, 1, 100);
+    validateSeenEvents(sinkOutputDir3, 1, 100);
+    LOGGER.debug("Processed all the events!");
+
+    //repair the config
+    agentProps.put("agent.channels.mem-01.transactionCapacity", "20");
+    StagedInstall.getInstance().reconfigure(agentProps);
+
+    TimeUnit.SECONDS.sleep(40); // Wait for sources and sink to process files
+    // Ensure we received all events.
+    validateSeenEvents(sinkOutputDir1, 1, 100);
 
     LOGGER.debug("testConfigReplacement() ended.");
   }

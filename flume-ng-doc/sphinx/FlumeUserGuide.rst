@@ -14,9 +14,9 @@
    limitations under the License.
 
 
-===============================
-Flume 1.9.0-SNAPSHOT User Guide
-===============================
+================================
+Flume 1.10.0-SNAPSHOT User Guide
+================================
 
 Introduction
 ============
@@ -34,18 +34,6 @@ of event data including but not limited to network traffic data, social-media-ge
 email messages and pretty much any data source possible.
 
 Apache Flume is a top level project at the Apache Software Foundation.
-
-There are currently two release code lines available, versions 0.9.x and 1.x.
-
-Documentation for the 0.9.x track is available at
-`the Flume 0.9.x User Guide <http://archive.cloudera.com/cdh/3/flume/UserGuide/>`_.
-
-This documentation applies to the 1.4.x track.
-
-New and existing users are encouraged to use the 1.x releases so as to
-leverage the performance improvements and configuration flexibilities available
-in the latest architecture.
-
 
 System Requirements
 -------------------
@@ -749,6 +737,119 @@ the selector will attempt to write the events to the optional channels. Any
 failures are simply ignored in that case.
 
 
+SSL/TLS support
+---------------
+
+Several Flume components support the SSL/TLS protocols in order to communicate with other systems
+securely.
+
+===========================  ======================
+Component                    SSL server or client
+===========================  ======================
+Avro Source                  server
+Avro Sink                    client
+Thrift Source                server
+Thrift Sink                  client
+Kafka Source                 client
+Kafka Channel                client
+Kafka Sink                   client
+HTTP Source                  server
+JMS Source                   client
+Syslog TCP Source            server
+Multiport Syslog TCP Source  server
+===========================  ======================
+
+The SSL compatible components have several configuration parameters to set up SSL, like
+enable SSL flag, keystore / truststore parameters (location, password, type) and additional
+SSL parameters (eg. disabled protocols).
+
+Enabling SSL for a component is always specified at component level in the agent configuration file.
+So some components may be configured to use SSL while others not (even with the same component type).
+
+The keystore / truststore setup can be specified at component level or globally.
+
+In case of the component level setup, the keystore / truststore is configured in the agent
+configuration file through component specific parameters. The advantage of this method is that the
+components can use different keystores (if this would be needed). The disadvantage is that the
+keystore parameters must be copied for each component in the agent configuration file.
+The component level setup is optional, but if it is defined, it has higher precedence than
+the global parameters.
+
+With the global setup, it is enough to define the keystore / truststore parameters once
+and use the same settings for all components, which means less and more centralized configuration.
+
+The global setup can be configured either through system properties or through environment variables.
+
+==================================  ===============================  ============================================================================================
+System property                     Environment variable             Description
+==================================  ===============================  ============================================================================================
+javax.net.ssl.keyStore              FLUME_SSL_KEYSTORE_PATH          Keystore location
+javax.net.ssl.keyStorePassword      FLUME_SSL_KEYSTORE_PASSWORD      Keystore password
+javax.net.ssl.keyStoreType          FLUME_SSL_KEYSTORE_TYPE          Keystore type (by default JKS)
+javax.net.ssl.trustStore            FLUME_SSL_TRUSTSTORE_PATH        Truststore location
+javax.net.ssl.trustStorePassword    FLUME_SSL_TRUSTSTORE_PASSWORD    Truststore password
+javax.net.ssl.trustStoreType        FLUME_SSL_TRUSTSTORE_TYPE        Truststore type (by default JKS)
+flume.ssl.include.protocols         FLUME_SSL_INCLUDE_PROTOCOLS      Protocols to include when calculating enabled protocols. A comma (,) separated list.
+                                                                     Excluded protocols will be excluded from this list if provided.
+flume.ssl.exclude.protocols         FLUME_SSL_EXCLUDE_PROTOCOLS      Protocols to exclude when calculating enabled protocols. A comma (,) separated list.
+flume.ssl.include.cipherSuites      FLUME_SSL_INCLUDE_CIPHERSUITES   Cipher suites to include when calculating enabled cipher suites. A comma (,) separated list.
+                                                                     Excluded cipher suites will be excluded from this list if provided.
+flume.ssl.exclude.cipherSuites      FLUME_SSL_EXCLUDE_CIPHERSUITES   Cipher suites to exclude when calculating enabled cipher suites. A comma (,) separated list.
+==================================  ===============================  ============================================================================================
+
+The SSL system properties can either be passed on the command line or by setting the ``JAVA_OPTS``
+environment variable in *conf/flume-env.sh*. (Although, using the command line is inadvisable because
+the commands including the passwords will be saved to the command history.)
+
+.. code-block:: properties
+
+    export JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.keyStore=/path/to/keystore.jks"
+    export JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.keyStorePassword=password"
+
+Flume uses the system properties defined in JSSE (Java Secure Socket Extension), so this is
+a standard way for setting up SSL. On the other hand, specifying passwords in system properties
+means that the passwords can be seen in the process list. For cases where it is not acceptable,
+it is also be possible to define the parameters in environment variables. Flume initializes
+the JSSE system properties from the corresponding environment variables internally in this case.
+
+The SSL environment variables can either be set in the shell environment before
+starting Flume or in *conf/flume-env.sh*. (Although, using the command line is inadvisable because
+the commands including the passwords will be saved to the command history.)
+
+.. code-block:: properties
+
+    export FLUME_SSL_KEYSTORE_PATH=/path/to/keystore.jks
+    export FLUME_SSL_KEYSTORE_PASSWORD=password
+
+**Please note:**
+
+* SSL must be enabled at component level. Specifying the global SSL parameters alone will not
+  have any effect.
+* If the global SSL parameters are specified at multiple levels, the priority is the
+  following (from higher to lower):
+
+  * component parameters in agent config
+  * system properties
+  * environment variables
+
+* If SSL is enabled for a component, but the SSL parameters are not specified in any of the ways
+  described above, then
+
+  * in case of keystores: configuration error
+  * in case of truststores: the default truststore will be used (``jssecacerts`` / ``cacerts`` in Oracle JDK)
+* The trustore password is optional in all cases. If not specified, then no integrity check will be
+  performed on the truststore when it is opened by the JDK.
+
+
+Source and sink batch sizes and channel transaction capacities
+--------------------------------------------------------------
+
+Sources and sinks can have a batch size parameter that determines the maximum number of events they
+process in one batch. This happens within a channel transaction that has an upper limit called
+transaction capacity. Batch size must be smaller than the channel's transaction capacity.
+There is an explicit check to prevent incompatible settings. This check happens
+whenever the configuration is read.
+
 Flume Sources
 -------------
 
@@ -760,27 +861,44 @@ When paired with the built-in Avro Sink on another (previous hop) Flume agent,
 it can create tiered collection topologies.
 Required properties are in **bold**.
 
-==================   ================  ===================================================
-Property Name        Default           Description
-==================   ================  ===================================================
-**channels**         --
-**type**             --                The component type name, needs to be ``avro``
-**bind**             --                hostname or IP address to listen on
-**port**             --                Port # to bind to
-threads              --                Maximum number of worker threads to spawn
+===================== ================  =======================================================
+Property Name         Default           Description
+===================== ================  =======================================================
+**channels**          --
+**type**              --                The component type name, needs to be ``avro``
+**bind**              --                hostname or IP address to listen on
+**port**              --                Port # to bind to
+threads               --                Maximum number of worker threads to spawn
 selector.type
 selector.*
-interceptors         --                Space-separated list of interceptors
+interceptors          --                Space-separated list of interceptors
 interceptors.*
-compression-type     none              This can be "none" or "deflate".  The compression-type must match the compression-type of matching AvroSource
-ssl                  false             Set this to true to enable SSL encryption. You must also specify a "keystore" and a "keystore-password".
-keystore             --                This is the path to a Java keystore file. Required for SSL.
-keystore-password    --                The password for the Java keystore. Required for SSL.
-keystore-type        JKS               The type of the Java keystore. This can be "JKS" or "PKCS12".
-exclude-protocols    SSLv3             Space-separated list of SSL/TLS protocols to exclude. SSLv3 will always be excluded in addition to the protocols specified.
-ipFilter             false             Set this to true to enable ipFiltering for netty
-ipFilterRules        --                Define N netty ipFilter pattern rules with this config.
-==================   ================  ===================================================
+compression-type      none              This can be "none" or "deflate".  The compression-type must match the compression-type of matching AvroSource
+ssl                   false             Set this to true to enable SSL encryption. If SSL is enabled,
+                                        you must also specify a "keystore" and a "keystore-password",
+                                        either through component level parameters (see below)
+                                        or as global SSL parameters (see `SSL/TLS support`_ section).
+keystore              --                This is the path to a Java keystore file.
+                                        If not specified here, then the global keystore will be used
+                                        (if defined, otherwise configuration error).
+keystore-password     --                The password for the Java keystore.
+                                        If not specified here, then the global keystore password will be used
+                                        (if defined, otherwise configuration error).
+keystore-type         JKS               The type of the Java keystore. This can be "JKS" or "PKCS12".
+                                        If not specified here, then the global keystore type will be used
+                                        (if defined, otherwise the default is JKS).
+exclude-protocols     SSLv3             Space-separated list of SSL/TLS protocols to exclude.
+                                        SSLv3 will always be excluded in addition to the protocols specified.
+include-protocols     --                Space-separated list of SSL/TLS protocols to include.
+                                        The enabled protocols will be the included protocols without the excluded protocols.
+                                        If included-protocols is empty, it includes every supported protocols.
+exclude-cipher-suites --                Space-separated list of cipher suites to exclude.
+include-cipher-suites --                Space-separated list of cipher suites to include.
+                                        The enabled cipher suites will be the included cipher suites without the excluded cipher suites.
+                                        If included-cipher-suites is empty, it includes every supported cipher suites.
+ipFilter              false             Set this to true to enable ipFiltering for netty
+ipFilterRules         --                Define N netty ipFilter pattern rules with this config.
+===================== ================  =======================================================
 
 Example for agent named a1:
 
@@ -819,27 +937,44 @@ agent-principal and agent-keytab are the properties used by the
 Thrift source to authenticate to the kerberos KDC.
 Required properties are in **bold**.
 
-==================   ===========  ===================================================
-Property Name        Default      Description
-==================   ===========  ===================================================
-**channels**         --
-**type**             --           The component type name, needs to be ``thrift``
-**bind**             --           hostname or IP address to listen on
-**port**             --           Port # to bind to
-threads              --           Maximum number of worker threads to spawn
+===================== ===========  ==========================================================================================================================
+Property Name         Default      Description
+===================== ===========  ==========================================================================================================================
+**channels**          --
+**type**              --           The component type name, needs to be ``thrift``
+**bind**              --           hostname or IP address to listen on
+**port**              --           Port # to bind to
+threads               --           Maximum number of worker threads to spawn
 selector.type
 selector.*
-interceptors         --           Space separated list of interceptors
+interceptors          --           Space separated list of interceptors
 interceptors.*
-ssl                  false        Set this to true to enable SSL encryption. You must also specify a "keystore" and a "keystore-password".
-keystore             --           This is the path to a Java keystore file. Required for SSL.
-keystore-password    --           The password for the Java keystore. Required for SSL.
-keystore-type        JKS          The type of the Java keystore. This can be "JKS" or "PKCS12".
-exclude-protocols    SSLv3        Space-separated list of SSL/TLS protocols to exclude. SSLv3 will always be excluded in addition to the protocols specified.
-kerberos             false        Set to true to enable kerberos authentication. In kerberos mode, agent-principal and agent-keytab  are required for successful authentication. The Thrift source in secure mode, will accept connections only from Thrift clients that have kerberos enabled and are successfully authenticated to the kerberos KDC.
-agent-principal      --           The kerberos principal used by the Thrift Source to authenticate to the kerberos KDC.
-agent-keytab         —-           The keytab location used by the Thrift Source in combination with the agent-principal to authenticate to the kerberos KDC.
-==================   ===========  ===================================================
+ssl                   false        Set this to true to enable SSL encryption. If SSL is enabled,
+                                   you must also specify a "keystore" and a "keystore-password",
+                                   either through component level parameters (see below)
+                                   or as global SSL parameters (see `SSL/TLS support`_ section)
+keystore              --           This is the path to a Java keystore file.
+                                   If not specified here, then the global keystore will be used
+                                   (if defined, otherwise configuration error).
+keystore-password     --           The password for the Java keystore.
+                                   If not specified here, then the global keystore password will be used
+                                   (if defined, otherwise configuration error).
+keystore-type         JKS          The type of the Java keystore. This can be "JKS" or "PKCS12".
+                                   If not specified here, then the global keystore type will be used
+                                   (if defined, otherwise the default is JKS).
+exclude-protocols     SSLv3        Space-separated list of SSL/TLS protocols to exclude.
+                                   SSLv3 will always be excluded in addition to the protocols specified.
+include-protocols     --           Space-separated list of SSL/TLS protocols to include.
+                                   The enabled protocols will be the included protocols without the excluded protocols.
+                                   If included-protocols is empty, it includes every supported protocols.
+exclude-cipher-suites --           Space-separated list of cipher suites to exclude.
+include-cipher-suites --           Space-separated list of cipher suites to include.
+                                   The enabled cipher suites will be the included cipher suites without the excluded cipher suites.
+
+kerberos              false        Set to true to enable kerberos authentication. In kerberos mode, agent-principal and agent-keytab  are required for successful authentication. The Thrift source in secure mode, will accept connections only from Thrift clients that have kerberos enabled and are successfully authenticated to the kerberos KDC.
+agent-principal       --           The kerberos principal used by the Thrift Source to authenticate to the kerberos KDC.
+agent-keytab          —-           The keytab location used by the Thrift Source in combination with the agent-principal to authenticate to the kerberos KDC.
+===================== ===========  ==========================================================================================================================
 
 Example for agent named a1:
 
@@ -963,8 +1098,8 @@ durableSubscriptionName     --           Name used to identify the durable subsc
 =========================   ===========  ==============================================================
 
 
-Converter
-'''''''''
+JMS message converter
+'''''''''''''''''''''
 The JMS source allows pluggable converters, though it's likely the default converter will work
 for most purposes. The default converter is able to convert Bytes, Text, and Object messages
 to FlumeEvents. In all cases, the properties in the message are added as headers to the
@@ -997,6 +1132,53 @@ Example for agent named a1:
   a1.sources.r1.destinationName = BUSINESS_DATA
   a1.sources.r1.destinationType = QUEUE
 
+
+SSL and JMS Source
+''''''''''''''''''
+
+JMS client implementations typically support to configure SSL/TLS via some Java system properties defined by JSSE
+(Java Secure Socket Extension). Specifying these system properties for Flume's JVM, JMS Source (or more precisely the
+JMS client implementation used by the JMS Source) can connect to the JMS server through SSL (of course only when the JMS
+server has also been set up to use SSL).
+It should work with any JMS provider and has been tested with ActiveMQ, IBM MQ and Oracle WebLogic.
+
+The following sections describe the SSL configuration steps needed on the Flume side only. You can find more detailed
+descriptions about the server side setup of the different JMS providers and also full working configuration examples on
+Flume Wiki.
+
+**SSL transport / server authentication:**
+
+If the JMS server uses self-signed certificate or its certificate is signed by a non-trusted CA (eg. the company's own
+CA), then a truststore (containing the right certificate) needs to be set up and passed to Flume. It can be done via
+the global SSL parameters. For more details about the global SSL setup, see the `SSL/TLS support`_ section.
+
+Some JMS providers require SSL specific JNDI Initial Context Factory and/or Provider URL settings when using SSL (eg.
+ActiveMQ uses ssl:// URL prefix instead of tcp://).
+In this case the source properties (``initialContextFactory`` and/or ``providerURL``) have to be adjusted in the agent
+config file.
+
+**Client certificate authentication (two-way SSL):**
+
+JMS Source can authenticate to the JMS server through client certificate authentication instead of the usual
+user/password login (when SSL is used and the JMS server is configured to accept this kind of authentication).
+
+The keystore containing Flume's key used for the authentication needs to be configured via the global SSL parameters
+again. For more details about the global SSL setup, see the `SSL/TLS support`_ section.
+
+The keystore should contain only one key (if multiple keys are present, then the first one will be used).
+The key password must be the same as the keystore password.
+
+In case of client certificate authentication, it is not needed to specify the ``userName`` / ``passwordFile`` properties
+for the JMS Source in the Flume agent config file.
+
+**Please note:**
+
+There are no component level configuration parameters for JMS Source unlike in case of other components.
+No enable SSL flag either.
+SSL setup is controlled by JNDI/Provider URL settings (ultimately the JMS server settings) and by the presence / absence
+of the truststore / keystore.
+
+
 Spooling Directory Source
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 This source lets you ingest data by placing files to be ingested into a
@@ -1005,7 +1187,8 @@ This source will watch the specified directory for new files, and will parse
 events out of new files as they appear.
 The event parsing logic is pluggable.
 After a given file has been fully read
-into the channel, it is renamed to indicate completion (or optionally deleted).
+into the channel, completion by default is indicated by renaming the file or it can be deleted or the trackerDir is used
+to keep track of processed files.
 
 Unlike the Exec source, this source is reliable and will not miss data, even if
 Flume is restarted or killed. In exchange for this reliability, only immutable,
@@ -1047,6 +1230,11 @@ ignorePattern             ^$              Regular expression specifying which fi
                                           the file is ignored.
 trackerDir                .flumespool     Directory to store metadata related to processing of files.
                                           If this path is not an absolute path, then it is interpreted as relative to the spoolDir.
+trackingPolicy            rename          The tracking policy defines how file processing is tracked. It can be "rename" or
+                                          "tracker_dir". This parameter is only effective if the deletePolicy is "never".
+                                          "rename" - After processing files they get renamed according to the fileSuffix parameter.
+                                          "tracker_dir" - Files are not renamed but a new empty file is created in the trackerDir.
+                                          The new tracker file name is derived from the ingested one plus the fileSuffix.
 consumeOrder              oldest          In which order files in the spooling directory will be consumed ``oldest``,
                                           ``youngest`` and ``random``. In case of ``oldest`` and ``youngest``, the last modified
                                           time of the files will be used to compare the files. In case of a tie, the file
@@ -1184,6 +1372,10 @@ skipToEnd                           false                          Whether to sk
 idleTimeout                         120000                         Time (ms) to close inactive files. If the closed file is appended new lines to, this source will automatically re-open it.
 writePosInterval                    3000                           Interval time (ms) to write the last position of each file on the position file.
 batchSize                           100                            Max number of lines to read and send to the channel at a time. Using the default is usually fine.
+maxBatchCount                       Long.MAX_VALUE                 Controls the number of batches being read consecutively from the same file.
+                                                                   If the source is tailing multiple files and one of them is written at a fast rate,
+                                                                   it can prevent other files to be processed, because the busy file would be read in an endless loop.
+                                                                   In this case lower this value.
 backoffSleepIncrement               1000                           The increment for time delay before reattempting to poll for new data, when the last attempt did not find any new data.
 maxBackoffSleep                     5000                           The max time delay between each reattempt to poll for new data, when the last attempt did not find any new data.
 cachePatternMatching                true                           Listing directories and applying the filename regex pattern may be time consuming for directories
@@ -1210,6 +1402,7 @@ Example for agent named a1:
   a1.sources.r1.headers.f2.headerKey1 = value2
   a1.sources.r1.headers.f2.headerKey2 = value2-2
   a1.sources.r1.fileHeader = true
+  a1.sources.ri.maxBatchCount = 1000
 
 Twitter 1% firehose Source (experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1257,7 +1450,7 @@ Kafka Source
 
 Kafka Source is an Apache Kafka consumer that reads messages from Kafka topics.
 If you have multiple Kafka sources running, you can configure them with the same Consumer Group
-so each will read a unique set of partitions for the topics.
+so each will read a unique set of partitions for the topics. This currently supports Kafka server releases 0.10.1.0 or higher. Testing was done up to 2.0.1 that was the highest avilable version at the time of the release.
 
 ==================================  ===========  ===================================================
 Property Name                       Default      Description
@@ -1290,12 +1483,6 @@ topicHeader                         topic        Defines the name of the header 
                                                  from, if the ``setTopicHeader`` property is set to ``true``. Care should be taken if combining
                                                  with the Kafka Sink ``topicHeader`` property so as to avoid sending the message back to the same
                                                  topic in a loop.
-migrateZookeeperOffsets             true         When no Kafka stored offset is found, look up the offsets in Zookeeper and commit them to Kafka.
-                                                 This should be true to support seamless Kafka client migration from older versions of Flume.
-                                                 Once migrated this can be set to false, though that should generally not be required.
-                                                 If no Zookeeper offset is found, the Kafka configuration kafka.consumer.auto.offset.reset
-                                                 defines how offsets are handled.
-                                                 Check `Kafka documentation <http://kafka.apache.org/documentation.html#newconsumerconfigs>`_ for details
 kafka.consumer.security.protocol    PLAINTEXT    Set to SASL_PLAINTEXT, SASL_SSL or SSL if writing to Kafka using some level of security. See below for additional info on secure setup.
 *more consumer security props*                   If using SASL_PLAINTEXT, SASL_SSL or SSL refer to `Kafka security <http://kafka.apache.org/documentation.html#security>`_ for additional
                                                  properties that need to be set on consumer.
@@ -1313,14 +1500,21 @@ Other Kafka Consumer Properties     --           These properties are used to co
 
 Deprecated Properties
 
-===============================  ===================  =============================================================================================
+===============================  ===================  ================================================================================================
 Property Name                    Default              Description
-===============================  ===================  =============================================================================================
+===============================  ===================  ================================================================================================
 topic                            --                   Use kafka.topics
 groupId                          flume                Use kafka.consumer.group.id
 zookeeperConnect                 --                   Is no longer supported by kafka consumer client since 0.9.x. Use kafka.bootstrap.servers
                                                       to establish connection with kafka cluster
-===============================  ===================  =============================================================================================
+migrateZookeeperOffsets          true                 When no Kafka stored offset is found, look up the offsets in Zookeeper and commit them to Kafka.
+                                                      This should be true to support seamless Kafka client migration from older versions of Flume.
+                                                      Once migrated this can be set to false, though that should generally not be required.
+                                                      If no Zookeeper offset is found, the Kafka configuration kafka.consumer.auto.offset.reset
+                                                      defines how offsets are handled.
+                                                      Check `Kafka documentation <http://kafka.apache.org/documentation.html#newconsumerconfigs>`_
+                                                      for details
+===============================  ===================  ================================================================================================
 
 Example for topic subscription by comma-separated topic list.
 
@@ -1381,9 +1575,12 @@ Example configuration with server side authentication and data encryption.
     a1.sources.source1.kafka.topics = mytopic
     a1.sources.source1.kafka.consumer.group.id = flume-consumer
     a1.sources.source1.kafka.consumer.security.protocol = SSL
+    # optional, the global truststore can be used alternatively
     a1.sources.source1.kafka.consumer.ssl.truststore.location=/path/to/truststore.jks
     a1.sources.source1.kafka.consumer.ssl.truststore.password=<password to access the truststore>
 
+Specyfing the truststore is optional here, the global truststore can be used instead.
+For more details about the global SSL setup, see the `SSL/TLS support`_ section.
 
 Note: By default the property ``ssl.endpoint.identification.algorithm``
 is not defined, so hostname verification is not performed.
@@ -1399,13 +1596,15 @@ against one of the following two fields:
 #) Common Name (CN) https://tools.ietf.org/html/rfc6125#section-2.3
 #) Subject Alternative Name (SAN) https://tools.ietf.org/html/rfc5280#section-4.2.1.6
 
-If client side authentication is also required then additionally the following should be added to Flume agent configuration.
+If client side authentication is also required then additionally the following needs to be added to Flume agent
+configuration or the global SSL setup can be used (see `SSL/TLS support`_ section).
 Each Flume agent has to have its client certificate which has to be trusted by Kafka brokers either
 individually or by their signature chain. Common example is to sign each client certificate by a single Root CA
 which in turn is trusted by Kafka brokers.
 
 .. code-block:: properties
 
+    # optional, the global keystore can be used alternatively
     a1.sources.source1.kafka.consumer.ssl.keystore.location=/path/to/client.keystore.jks
     a1.sources.source1.kafka.consumer.ssl.keystore.password=<password to access the keystore>
 
@@ -1452,6 +1651,7 @@ Example secure configuration using SASL_SSL:
     a1.sources.source1.kafka.consumer.security.protocol = SASL_SSL
     a1.sources.source1.kafka.consumer.sasl.mechanism = GSSAPI
     a1.sources.source1.kafka.consumer.sasl.kerberos.service.name = kafka
+    # optional, the global truststore can be used alternatively
     a1.sources.source1.kafka.consumer.ssl.truststore.location=/path/to/truststore.jks
     a1.sources.source1.kafka.consumer.ssl.truststore.password=<password to access the truststore>
 
@@ -1597,26 +1797,62 @@ Syslog TCP Source
 
 The original, tried-and-true syslog TCP source.
 
-==============   ===========  ==============================================
-Property Name    Default      Description
-==============   ===========  ==============================================
-**channels**     --
-**type**         --           The component type name, needs to be ``syslogtcp``
-**host**         --           Host name or IP address to bind to
-**port**         --           Port # to bind to
-eventSize        2500         Maximum size of a single event line, in bytes
-keepFields       none         Setting this to 'all' will preserve the Priority,
-                              Timestamp and Hostname in the body of the event.
-                              A spaced separated list of fields to include
-                              is allowed as well. Currently, the following
-                              fields can be included: priority, version,
-                              timestamp, hostname. The values 'true' and 'false'
-                              have been deprecated in favor of 'all' and 'none'.
-selector.type                 replicating or multiplexing
-selector.*       replicating  Depends on the selector.type value
-interceptors     --           Space-separated list of interceptors
+===================== ===========  =================================================================================================
+Property Name         Default      Description
+===================== ===========  =================================================================================================
+**channels**          --
+**type**              --           The component type name, needs to be ``syslogtcp``
+**host**              --           Host name or IP address to bind to
+**port**              --           Port # to bind to
+eventSize             2500         Maximum size of a single event line, in bytes
+keepFields            none         Setting this to 'all' will preserve the Priority,
+                                   Timestamp and Hostname in the body of the event.
+                                   A spaced separated list of fields to include
+                                   is allowed as well. Currently, the following
+                                   fields can be included: priority, version,
+                                   timestamp, hostname. The values 'true' and 'false'
+                                   have been deprecated in favor of 'all' and 'none'.
+clientIPHeader        --           If specified, the IP address of the client will be stored in
+                                   the header of each event using the header name specified here.
+                                   This allows for interceptors and channel selectors to customize
+                                   routing logic based on the IP address of the client.
+                                   Do not use the standard Syslog header names here (like _host_)
+                                   because the event header will be overridden in that case.
+clientHostnameHeader  --           If specified, the host name of the client will be stored in
+                                   the header of each event using the header name specified here.
+                                   This allows for interceptors and channel selectors to customize
+                                   routing logic based on the host name of the client.
+                                   Retrieving the host name may involve a name service reverse
+                                   lookup which may affect the performance.
+                                   Do not use the standard Syslog header names here (like _host_)
+                                   because the event header will be overridden in that case.
+selector.type                      replicating or multiplexing
+selector.*            replicating  Depends on the selector.type value
+interceptors          --           Space-separated list of interceptors
 interceptors.*
-==============   ===========  ==============================================
+ssl                   false        Set this to true to enable SSL encryption. If SSL is enabled,
+                                   you must also specify a "keystore" and a "keystore-password",
+                                   either through component level parameters (see below)
+                                   or as global SSL parameters (see `SSL/TLS support`_ section).
+keystore              --           This is the path to a Java keystore file.
+                                   If not specified here, then the global keystore will be used
+                                   (if defined, otherwise configuration error).
+keystore-password     --           The password for the Java keystore.
+                                   If not specified here, then the global keystore password will be used
+                                   (if defined, otherwise configuration error).
+keystore-type         JKS          The type of the Java keystore. This can be "JKS" or "PKCS12".
+                                   If not specified here, then the global keystore type will be used
+                                   (if defined, otherwise the default is JKS).
+exclude-protocols     SSLv3        Space-separated list of SSL/TLS protocols to exclude.
+                                   SSLv3 will always be excluded in addition to the protocols specified.
+include-protocols     --           Space-separated list of SSL/TLS protocols to include.
+                                   The enabled protocols will be the included protocols without the excluded protocols.
+                                   If included-protocols is empty, it includes every supported protocols.
+exclude-cipher-suites --           Space-separated list of cipher suites to exclude.
+include-cipher-suites --           Space-separated list of cipher suites to include.
+                                   The enabled cipher suites will be the included cipher suites without the excluded cipher suites.
+                                   If included-cipher-suites is empty, it includes every supported cipher suites.
+===================== ===========  =================================================================================================
 
 For example, a syslog TCP source for agent named a1:
 
@@ -1640,9 +1876,9 @@ Provides support for RFC-3164 and many common RFC-5424 formatted messages.
 Also provides the capability to configure the character set used on a per-port
 basis.
 
-====================  ================  ==============================================
+===================== ================  ==============================================
 Property Name         Default           Description
-====================  ================  ==============================================
+===================== ================  ==============================================
 **channels**          --
 **type**              --                The component type name, needs to be ``multiport_syslogtcp``
 **host**              --                Host name or IP address to bind to.
@@ -1656,6 +1892,20 @@ keepFields            none              Setting this to 'all' will preserve the
                                         timestamp, hostname. The values 'true' and 'false'
                                         have been deprecated in favor of 'all' and 'none'.
 portHeader            --                If specified, the port number will be stored in the header of each event using the header name specified here. This allows for interceptors and channel selectors to customize routing logic based on the incoming port.
+clientIPHeader        --                If specified, the IP address of the client will be stored in
+                                        the header of each event using the header name specified here.
+                                        This allows for interceptors and channel selectors to customize
+                                        routing logic based on the IP address of the client.
+                                        Do not use the standard Syslog header names here (like _host_)
+                                        because the event header will be overridden in that case.
+clientHostnameHeader  --                If specified, the host name of the client will be stored in
+                                        the header of each event using the header name specified here.
+                                        This allows for interceptors and channel selectors to customize
+                                        routing logic based on the host name of the client.
+                                        Retrieving the host name may involve a name service reverse
+                                        lookup which may affect the performance.
+                                        Do not use the standard Syslog header names here (like _host_)
+                                        because the event header will be overridden in that case.
 charset.default       UTF-8             Default character set used while parsing syslog events into strings.
 charset.port.<port>   --                Character set is configurable on a per-port basis.
 batchSize             100               Maximum number of events to attempt to process per request loop. Using the default is usually fine.
@@ -1665,7 +1915,29 @@ selector.type         replicating       replicating, multiplexing, or custom
 selector.*            --                Depends on the ``selector.type`` value
 interceptors          --                Space-separated list of interceptors.
 interceptors.*
-====================  ================  ==============================================
+ssl                   false             Set this to true to enable SSL encryption. If SSL is enabled,
+                                        you must also specify a "keystore" and a "keystore-password",
+                                        either through component level parameters (see below)
+                                        or as global SSL parameters (see `SSL/TLS support`_ section).
+keystore              --                This is the path to a Java keystore file.
+                                        If not specified here, then the global keystore will be used
+                                        (if defined, otherwise configuration error).
+keystore-password     --                The password for the Java keystore.
+                                        If not specified here, then the global keystore password will be used
+                                        (if defined, otherwise configuration error).
+keystore-type         JKS               The type of the Java keystore. This can be "JKS" or "PKCS12".
+                                        If not specified here, then the global keystore type will be used
+                                        (if defined, otherwise the default is JKS).
+exclude-protocols     SSLv3             Space-separated list of SSL/TLS protocols to exclude.
+                                        SSLv3 will always be excluded in addition to the protocols specified.
+include-protocols     --                Space-separated list of SSL/TLS protocols to include.
+                                        The enabled protocols will be the included protocols without the excluded protocols.
+                                        If included-protocols is empty, it includes every supported protocols.
+exclude-cipher-suites --                Space-separated list of cipher suites to exclude.
+include-cipher-suites --                Space-separated list of cipher suites to include.
+                                        The enabled cipher suites will be the included cipher suites without the excluded cipher suites.
+                                        If included-cipher-suites is empty, it includes every supported cipher suites.
+===================== ================  ==============================================
 
 For example, a multiport syslog TCP source for agent named a1:
 
@@ -1682,20 +1954,34 @@ For example, a multiport syslog TCP source for agent named a1:
 Syslog UDP Source
 '''''''''''''''''
 
-==============  ===========  ==============================================
-Property Name   Default      Description
-==============  ===========  ==============================================
-**channels**    --
-**type**        --           The component type name, needs to be ``syslogudp``
-**host**        --           Host name or IP address to bind to
-**port**        --           Port # to bind to
-keepFields      false        Setting this to true will preserve the Priority,
-                             Timestamp and Hostname in the body of the event.
-selector.type                replicating or multiplexing
-selector.*      replicating  Depends on the selector.type value
-interceptors    --           Space-separated list of interceptors
+====================  ===========  ================================================================
+Property Name         Default      Description
+====================  ===========  ================================================================
+**channels**          --
+**type**              --           The component type name, needs to be ``syslogudp``
+**host**              --           Host name or IP address to bind to
+**port**              --           Port # to bind to
+keepFields            false        Setting this to true will preserve the Priority,
+                                   Timestamp and Hostname in the body of the event.
+clientIPHeader        --           If specified, the IP address of the client will be stored in
+                                   the header of each event using the header name specified here.
+                                   This allows for interceptors and channel selectors to customize
+                                   routing logic based on the IP address of the client.
+                                   Do not use the standard Syslog header names here (like _host_)
+                                   because the event header will be overridden in that case.
+clientHostnameHeader  --           If specified, the host name of the client will be stored in
+                                   the header of each event using the header name specified here.
+                                   This allows for interceptors and channel selectors to customize
+                                   routing logic based on the host name of the client.
+                                   Retrieving the host name may involve a name service reverse
+                                   lookup which may affect the performance.
+                                   Do not use the standard Syslog header names here (like _host_)
+                                   because the event header will be overridden in that case.
+selector.type                      replicating or multiplexing
+selector.*            replicating  Depends on the selector.type value
+interceptors          --           Space-separated list of interceptors
 interceptors.*
-==============  ===========  ==============================================
+====================  ===========  ================================================================
 
 
 For example, a syslog UDP source for agent named a1:
@@ -1728,9 +2014,9 @@ inserted into the channel in one transaction.
 This source is based on Jetty 9.4 and offers the ability to set additional
 Jetty-specific parameters which will be passed directly to the Jetty components.
 
-====================  ============================================  =====================================================================================
+===================== ============================================  =====================================================================================
 Property Name         Default                                       Description
-====================  ============================================  =====================================================================================
+===================== ============================================  =====================================================================================
 **type**                                                            The component type name, needs to be ``http``
 **port**              --                                            The port the source should bind to.
 bind                  0.0.0.0                                       The hostname or IP address to listen on
@@ -1740,17 +2026,41 @@ selector.type         replicating                                   replicating 
 selector.*                                                          Depends on the selector.type value
 interceptors          --                                            Space-separated list of interceptors
 interceptors.*
-enableSSL             false                                         Set the property true, to enable SSL. *HTTP Source does not support SSLv3.*
-excludeProtocols      SSLv3                                         Space-separated list of SSL/TLS protocols to exclude. SSLv3 is always excluded.
-keystore                                                            Location of the keystore includng keystore file name
-keystorePassword                                                    Keystore password
+ssl                   false                                         Set the property true, to enable SSL. *HTTP Source does not support SSLv3.*
+exclude-protocols     SSLv3                                         Space-separated list of SSL/TLS protocols to exclude.
+                                                                    SSLv3 will always be excluded in addition to the protocols specified.
+include-protocols     --                                            Space-separated list of SSL/TLS protocols to include.
+                                                                    The enabled protocols will be the included protocols without the excluded protocols.
+                                                                    If included-protocols is empty, it includes every supported protocols.
+exclude-cipher-suites --                                            Space-separated list of cipher suites to exclude.
+include-cipher-suites --                                            Space-separated list of cipher suites to include.
+                                                                    The enabled cipher suites will be the included cipher suites without the excluded cipher suites.
+keystore                                                            Location of the keystore including keystore file name.
+                                                                    If SSL is enabled but the keystore is not specified here,
+                                                                    then the global keystore will be used
+                                                                    (if defined, otherwise configuration error).
+keystore-password                                                   Keystore password.
+                                                                    If SSL is enabled but the keystore password is not specified here,
+                                                                    then the global keystore password will be used
+                                                                    (if defined, otherwise configuration error).
+keystore-type         JKS                                           Keystore type. This can be "JKS" or "PKCS12".
 QueuedThreadPool.*                                                  Jetty specific settings to be set on org.eclipse.jetty.util.thread.QueuedThreadPool.
                                                                     N.B. QueuedThreadPool will only be used if at least one property of this class is set.
 HttpConfiguration.*                                                 Jetty specific settings to be set on org.eclipse.jetty.server.HttpConfiguration
 SslContextFactory.*                                                 Jetty specific settings to be set on org.eclipse.jetty.util.ssl.SslContextFactory (only
-                                                                    applicable when *enableSSL* is set to true).
+                                                                    applicable when *ssl* is set to true).
 ServerConnector.*                                                   Jetty specific settings to be set on org.eclipse.jetty.server.ServerConnector
-=========================================================================================================================================================
+===================== ============================================  =====================================================================================
+
+Deprecated Properties
+
+===============================  ===================  =============================================================================================
+Property Name                    Default              Description
+===============================  ===================  =============================================================================================
+keystorePassword                 --                   Use *keystore-password*. Deprecated value will be overwritten with the new one.
+excludeProtocols                 SSLv3                Use *exclude-protocols*. Deprecated value will be overwritten with the new one.
+enableSSL                        false                Use *ssl*. Deprecated value will be overwritten with the new one.
+===============================  ===================  =============================================================================================
 
 N.B. Jetty-specific settings are set using the setter-methods on the objects listed above. For full details see the Javadoc for these classes
 (`QueuedThreadPool <http://www.eclipse.org/jetty/javadoc/9.4.6.v20170531/org/eclipse/jetty/util/thread/QueuedThreadPool.html>`_,
@@ -1845,6 +2155,7 @@ size                 500          Payload size of each Event. Unit:**byte**
 maxTotalEvents       -1           Maximum number of Events to be sent
 maxSuccessfulEvents  -1           Maximum number of Events successfully sent
 batchSize            1            Number of Events to be sent in one batch
+maxEventsPerSecond   0            When set to an integer greater than zero, enforces a rate limiter onto the source.
 ===================  ===========  ===================================================
 
 Example for agent named **a1**:
@@ -2064,6 +2375,7 @@ hdfs.filePrefix         FlumeData     Name prefixed to files created by Flume in
 hdfs.fileSuffix         --            Suffix to append to file (eg ``.avro`` - *NOTE: period is not automatically added*)
 hdfs.inUsePrefix        --            Prefix that is used for temporal files that flume actively writes into
 hdfs.inUseSuffix        ``.tmp``      Suffix that is used for temporal files that flume actively writes into
+hdfs.emptyInUseSuffix   false         If ``false`` an ``hdfs.inUseSuffix`` is used while writing the output. After closing the output ``hdfs.inUseSuffix`` is removed from the output file name. If ``true`` the ``hdfs.inUseSuffix`` parameter is ignored an empty string is used instead.
 hdfs.rollInterval       30            Number of seconds to wait before rolling current file
                                       (0 = never roll based on time interval)
 hdfs.rollSize           1024          File size to trigger roll, in bytes (0: never roll based on file size)
@@ -2079,8 +2391,6 @@ hdfs.fileType           SequenceFile  File format: currently ``SequenceFile``, `
 hdfs.maxOpenFiles       5000          Allow only this number of open files. If this number is exceeded, the oldest file is closed.
 hdfs.minBlockReplicas   --            Specify minimum number of replicas per HDFS block. If not specified, it comes from the default Hadoop config in the classpath.
 hdfs.writeFormat        Writable      Format for sequence file records. One of ``Text`` or ``Writable``. Set to ``Text`` before creating data files with Flume, otherwise those files cannot be read by either Apache Impala (incubating) or Apache Hive.
-hdfs.callTimeout        10000         Number of milliseconds allowed for HDFS operations, such as open, write, flush, close.
-                                      This number should be increased if many HDFS timeout operations are occurring.
 hdfs.threadsPoolSize    10            Number of threads per HDFS sink for HDFS IO ops (open, write, etc.)
 hdfs.rollTimerPoolSize  1             Number of threads per HDFS sink for scheduling timed file rolling
 hdfs.kerberosPrincipal  --            Kerberos user principal for accessing secure HDFS
@@ -2104,6 +2414,15 @@ serializer              ``TEXT``      Other possible options include ``avro_even
 serializer.*
 ======================  ============  ======================================================================
 
+Deprecated Properties
+
+======================  ============  ======================================================================================
+Name                    Default       Description
+======================  ============  ======================================================================================
+hdfs.callTimeout        30000         Number of milliseconds allowed for HDFS operations, such as open, write, flush, close.
+                                      This number should be increased if many HDFS timeout operations are occurring.
+======================  ============  ======================================================================================
+
 Example for agent named a1:
 
 .. code-block:: properties
@@ -2112,7 +2431,7 @@ Example for agent named a1:
   a1.sinks = k1
   a1.sinks.k1.type = hdfs
   a1.sinks.k1.channel = c1
-  a1.sinks.k1.hdfs.path = /flume/events/%y-%m-%d/%H%M/%S
+  a1.sinks.k1.hdfs.path = /flume/events/%Y-%m-%d/%H%M/%S
   a1.sinks.k1.hdfs.filePrefix = events-
   a1.sinks.k1.hdfs.round = true
   a1.sinks.k1.hdfs.roundValue = 10
@@ -2247,7 +2566,7 @@ Example for agent named a1:
  a1.sinks.k1.hive.metastore = thrift://127.0.0.1:9083
  a1.sinks.k1.hive.database = logsdb
  a1.sinks.k1.hive.table = weblogs
- a1.sinks.k1.hive.partition = asia,%{country},%y-%m-%d-%H-%M
+ a1.sinks.k1.hive.partition = asia,%{country},%Y-%m-%d-%H-%M
  a1.sinks.k1.useLocalTimeStamp = false
  a1.sinks.k1.round = true
  a1.sinks.k1.roundValue = 10
@@ -2312,9 +2631,9 @@ compression-type             none                                               
 compression-level            6                                                      The level of compression to compress event. 0 = no compression and 1-9 is compression.  The higher the number the more compression
 ssl                          false                                                  Set to true to enable SSL for this AvroSink. When configuring SSL, you can optionally set a "truststore", "truststore-password", "truststore-type", and specify whether to "trust-all-certs".
 trust-all-certs              false                                                  If this is set to true, SSL server certificates for remote servers (Avro Sources) will not be checked. This should NOT be used in production because it makes it easier for an attacker to execute a man-in-the-middle attack and "listen in" on the encrypted connection.
-truststore                   --                                                     The path to a custom Java truststore file. Flume uses the certificate authority information in this file to determine whether the remote Avro Source's SSL authentication credentials should be trusted. If not specified, the default Java JSSE certificate authority files (typically "jssecacerts" or "cacerts" in the Oracle JRE) will be used.
-truststore-password          --                                                     The password for the specified truststore.
-truststore-type              JKS                                                    The type of the Java truststore. This can be "JKS" or other supported Java truststore type.
+truststore                   --                                                     The path to a custom Java truststore file. Flume uses the certificate authority information in this file to determine whether the remote Avro Source's SSL authentication credentials should be trusted. If not specified, then the global keystore will be used. If the global keystore not specified either, then the default Java JSSE certificate authority files (typically "jssecacerts" or "cacerts" in the Oracle JRE) will be used.
+truststore-password          --                                                     The password for the truststore. If not specified, then the global keystore password will be used (if defined).
+truststore-type              JKS                                                    The type of the Java truststore. This can be "JKS" or other supported Java truststore type. If not specified, then the global keystore type will be used (if defined, otherwise the defautl is JKS).
 exclude-protocols            SSLv3                                                  Space-separated list of SSL/TLS protocols to exclude. SSLv3 will always be excluded in addition to the protocols specified.
 maxIoWorkers                 2 * the number of available processors in the machine  The maximum number of I/O worker threads. This is configured on the NettyAvroRpcClient NioClientSocketChannelFactory.
 ==========================   =====================================================  ===========================================================================================
@@ -2357,9 +2676,9 @@ connect-timeout              20000    Amount of time (ms) to allow for the first
 request-timeout              20000    Amount of time (ms) to allow for requests after the first.
 connection-reset-interval    none     Amount of time (s) before the connection to the next hop is reset. This will force the Thrift Sink to reconnect to the next hop. This will allow the sink to connect to hosts behind a hardware load-balancer when news hosts are added without having to restart the agent.
 ssl                          false    Set to true to enable SSL for this ThriftSink. When configuring SSL, you can optionally set a "truststore", "truststore-password" and "truststore-type"
-truststore                   --       The path to a custom Java truststore file. Flume uses the certificate authority information in this file to determine whether the remote Thrift Source's SSL authentication credentials should be trusted. If not specified, the default Java JSSE certificate authority files (typically "jssecacerts" or "cacerts" in the Oracle JRE) will be used.
-truststore-password          --       The password for the specified truststore.
-truststore-type              JKS      The type of the Java truststore. This can be "JKS" or other supported Java truststore type.
+truststore                   --       The path to a custom Java truststore file. Flume uses the certificate authority information in this file to determine whether the remote Thrift Source's SSL authentication credentials should be trusted. If not specified, then the global keystore will be used. If the global keystore not specified either, then the default Java JSSE certificate authority files (typically "jssecacerts" or "cacerts" in the Oracle JRE) will be used.
+truststore-password          --       The password for the truststore. If not specified, then the global keystore password will be used (if defined).
+truststore-type              JKS      The type of the Java truststore. This can be "JKS" or other supported Java truststore type. If not specified, then the global keystore type will be used (if defined, otherwise the defautl is JKS).
 exclude-protocols            SSLv3    Space-separated list of SSL/TLS protocols to exclude
 kerberos                     false    Set to true to enable kerberos authentication. In kerberos mode, client-principal, client-keytab and server-principal are required for successful authentication and communication to a kerberos enabled Thrift Source.
 client-principal             —-       The kerberos principal used by the Thrift Sink to authenticate to the kerberos KDC.
@@ -2432,7 +2751,7 @@ sink.pathManager.extension  --       The file extension if the default PathManag
 sink.pathManager.prefix     --       A character string to add to the beginning of the file name if the default PathManager is used
 sink.rollInterval           30       Roll the file every 30 seconds. Specifying 0 will disable rolling and cause all events to be written to a single file.
 sink.serializer             TEXT     Other possible options include ``avro_event`` or the FQCN of an implementation of EventSerializer.Builder interface.
-batchSize                   100
+sink.batchSize              100
 ==========================  =======  ======================================================================================================================
 
 Example for agent named a1:
@@ -2531,6 +2850,46 @@ Example for agent named a1:
   a1.sinks.k1.serializer = org.apache.flume.sink.hbase.RegexHbaseEventSerializer
   a1.sinks.k1.channel = c1
 
+HBase2Sink
+''''''''''
+
+HBase2Sink is the equivalent of HBaseSink for HBase version 2.
+The provided functionality and the configuration parameters are the same as in case of HBaseSink (except the hbase2 tag in the sink type and the package/class names).
+
+The type is the FQCN: org.apache.flume.sink.hbase2.HBase2Sink.
+
+Required properties are in **bold**.
+
+==================  ========================================================  ==============================================================================
+Property Name       Default                                                   Description
+==================  ========================================================  ==============================================================================
+**channel**         --
+**type**            --                                                        The component type name, needs to be ``hbase2``
+**table**           --                                                        The name of the table in HBase to write to.
+**columnFamily**    --                                                        The column family in HBase to write to.
+zookeeperQuorum     --                                                        The quorum spec. This is the value for the property ``hbase.zookeeper.quorum`` in hbase-site.xml
+znodeParent         /hbase                                                    The base path for the znode for the -ROOT- region. Value of ``zookeeper.znode.parent`` in hbase-site.xml
+batchSize           100                                                       Number of events to be written per txn.
+coalesceIncrements  false                                                     Should the sink coalesce multiple increments to a cell per batch. This might give
+                                                                              better performance if there are multiple increments to a limited number of cells.
+serializer          org.apache.flume.sink.hbase2.SimpleHBase2EventSerializer  Default increment column = "iCol", payload column = "pCol".
+serializer.*        --                                                        Properties to be passed to the serializer.
+kerberosPrincipal   --                                                        Kerberos user principal for accessing secure HBase
+kerberosKeytab      --                                                        Kerberos keytab for accessing secure HBase
+==================  ========================================================  ==============================================================================
+
+Example for agent named a1:
+
+.. code-block:: properties
+
+  a1.channels = c1
+  a1.sinks = k1
+  a1.sinks.k1.type = hbase2
+  a1.sinks.k1.table = foo_table
+  a1.sinks.k1.columnFamily = bar_cf
+  a1.sinks.k1.serializer = org.apache.flume.sink.hbase2.RegexHBase2EventSerializer
+  a1.sinks.k1.channel = c1
+
 AsyncHBaseSink
 ''''''''''''''
 
@@ -2541,6 +2900,7 @@ to HBase. This sink uses the `Asynchbase API <https://github.com/OpenTSDB/asynch
 HBase. This sink provides the same consistency guarantees as HBase,
 which is currently row-wise atomicity. In the event of Hbase failing to
 write certain events, the sink will replay all events in that transaction.
+AsyncHBaseSink can only be used with HBase 1.x. The async client library used by AsyncHBaseSink is not available for HBase 2.
 The type is the FQCN: org.apache.flume.sink.hbase.AsyncHBaseSink.
 Required properties are in **bold**.
 
@@ -2779,9 +3139,9 @@ Kafka Sink
 This is a Flume Sink implementation that can publish data to a
 `Kafka <http://kafka.apache.org/>`_ topic. One of the objective is to integrate Flume
 with Kafka so that pull based processing systems can process the data coming
-through various Flume sources. This currently supports Kafka 0.9.x series of releases.
+through various Flume sources.
 
-This version of Flume no longer supports Older Versions (0.8.x) of Kafka.
+This currently supports Kafka server releases 0.10.1.0 or higher. Testing was done up to 2.0.1 that was the highest avilable version at the time of the release.
 
 Required properties are marked in bold font.
 
@@ -2901,9 +3261,12 @@ Example configuration with server side authentication and data encryption.
     a1.sinks.sink1.kafka.bootstrap.servers = kafka-1:9093,kafka-2:9093,kafka-3:9093
     a1.sinks.sink1.kafka.topic = mytopic
     a1.sinks.sink1.kafka.producer.security.protocol = SSL
+    # optional, the global truststore can be used alternatively
     a1.sinks.sink1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
     a1.sinks.sink1.kafka.producer.ssl.truststore.password = <password to access the truststore>
 
+Specyfing the truststore is optional here, the global truststore can be used instead.
+For more details about the global SSL setup, see the `SSL/TLS support`_ section.
 
 Note: By default the property ``ssl.endpoint.identification.algorithm``
 is not defined, so hostname verification is not performed.
@@ -2919,13 +3282,15 @@ against one of the following two fields:
 #) Common Name (CN) https://tools.ietf.org/html/rfc6125#section-2.3
 #) Subject Alternative Name (SAN) https://tools.ietf.org/html/rfc5280#section-4.2.1.6
 
-If client side authentication is also required then additionally the following should be added to Flume agent configuration.
+If client side authentication is also required then additionally the following needs to be added to Flume agent
+configuration or the global SSL setup can be used (see `SSL/TLS support`_ section).
 Each Flume agent has to have its client certificate which has to be trusted by Kafka brokers either
 individually or by their signature chain. Common example is to sign each client certificate by a single Root CA
 which in turn is trusted by Kafka brokers.
 
 .. code-block:: properties
 
+    # optional, the global keystore can be used alternatively
     a1.sinks.sink1.kafka.producer.ssl.keystore.location = /path/to/client.keystore.jks
     a1.sinks.sink1.kafka.producer.ssl.keystore.password = <password to access the keystore>
 
@@ -2971,6 +3336,7 @@ Example secure configuration using SASL_SSL:
     a1.sinks.sink1.kafka.producer.security.protocol = SASL_SSL
     a1.sinks.sink1.kafka.producer.sasl.mechanism = GSSAPI
     a1.sinks.sink1.kafka.producer.sasl.kerberos.service.name = kafka
+    # optional, the global truststore can be used alternatively
     a1.sinks.sink1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
     a1.sinks.sink1.kafka.producer.ssl.truststore.password = <password to access the truststore>
 
@@ -3180,9 +3546,7 @@ The Kafka channel can be used for multiple scenarios:
 #. With Flume source and interceptor but no sink - it allows writing Flume events into a Kafka topic, for use by other apps
 #. With Flume sink, but no source - it is a low-latency, fault tolerant way to send events from Kafka to Flume sinks such as HDFS, HBase or Solr
 
-
-This version of Flume requires Kafka version 0.9 or greater due to the reliance on the Kafka clients shipped with that version. The configuration of
-the channel has changed compared to previous flume versions.
+This currently supports Kafka server releases 0.10.1.0 or higher. Testing was done up to 2.0.1 that was the highest avilable version at the time of the release.
 
 The configuration parameters are organized as such:
 
@@ -3212,10 +3576,6 @@ parseAsFlumeEvent                        true                        Expecting A
                                                                      This should be true if Flume source is writing to the channel and false if other producers are
                                                                      writing into the topic that the channel is using. Flume source messages to Kafka can be parsed outside of Flume by using
                                                                      org.apache.flume.source.avro.AvroFlumeEvent provided by the flume-ng-sdk artifact
-migrateZookeeperOffsets                  true                        When no Kafka stored offset is found, look up the offsets in Zookeeper and commit them to Kafka.
-                                                                     This should be true to support seamless Kafka client migration from older versions of Flume. Once migrated this can be set
-                                                                     to false, though that should generally not be required. If no Zookeeper offset is found the kafka.consumer.auto.offset.reset
-                                                                     configuration defines how offsets are handled.
 pollTimeout                              500                         The amount of time(in milliseconds) to wait in the "poll()" call of the consumer.
                                                                      https://kafka.apache.org/090/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html#poll(long)
 defaultPartitionId                       --                          Specifies a Kafka partition ID (integer) for all events in this channel to be sent to, unless
@@ -3240,17 +3600,20 @@ kafka.consumer.security.protocol         PLAINTEXT                   Same as kaf
 
 Deprecated Properties
 
-================================  ==========================  ===============================================================================================================
+================================  ==========================  ============================================================================================================================
 Property Name                     Default                     Description
-================================  ==========================  ===============================================================================================================
+================================  ==========================  ============================================================================================================================
 brokerList                        --                          List of brokers in the Kafka cluster used by the channel
                                                               This can be a partial list of brokers, but we recommend at least two for HA.
                                                               The format is comma separated list of hostname:port
 topic                             flume-channel               Use kafka.topic
 groupId                           flume                       Use kafka.consumer.group.id
 readSmallestOffset                false                       Use kafka.consumer.auto.offset.reset
-
-================================  ==========================  ===============================================================================================================
+migrateZookeeperOffsets           true                        When no Kafka stored offset is found, look up the offsets in Zookeeper and commit them to Kafka.
+                                                              This should be true to support seamless Kafka client migration from older versions of Flume. Once migrated this can be set
+                                                              to false, though that should generally not be required. If no Zookeeper offset is found the kafka.consumer.auto.offset.reset
+                                                              configuration defines how offsets are handled.
+================================  ==========================  ============================================================================================================================
 
 .. note:: Due to the way the channel is load balanced, there may be duplicate events when the agent first starts up
 
@@ -3300,12 +3663,16 @@ Example configuration with server side authentication and data encryption.
     a1.channels.channel1.kafka.topic = channel1
     a1.channels.channel1.kafka.consumer.group.id = flume-consumer
     a1.channels.channel1.kafka.producer.security.protocol = SSL
+    # optional, the global truststore can be used alternatively
     a1.channels.channel1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
     a1.channels.channel1.kafka.producer.ssl.truststore.password = <password to access the truststore>
     a1.channels.channel1.kafka.consumer.security.protocol = SSL
+    # optional, the global truststore can be used alternatively
     a1.channels.channel1.kafka.consumer.ssl.truststore.location = /path/to/truststore.jks
     a1.channels.channel1.kafka.consumer.ssl.truststore.password = <password to access the truststore>
 
+Specyfing the truststore is optional here, the global truststore can be used instead.
+For more details about the global SSL setup, see the `SSL/TLS support`_ section.
 
 Note: By default the property ``ssl.endpoint.identification.algorithm``
 is not defined, so hostname verification is not performed.
@@ -3322,15 +3689,18 @@ against one of the following two fields:
 #) Common Name (CN) https://tools.ietf.org/html/rfc6125#section-2.3
 #) Subject Alternative Name (SAN) https://tools.ietf.org/html/rfc5280#section-4.2.1.6
 
-If client side authentication is also required then additionally the following should be added to Flume agent configuration.
+If client side authentication is also required then additionally the following needs to be added to Flume agent
+configuration or the global SSL setup can be used (see `SSL/TLS support`_ section).
 Each Flume agent has to have its client certificate which has to be trusted by Kafka brokers either
 individually or by their signature chain. Common example is to sign each client certificate by a single Root CA
 which in turn is trusted by Kafka brokers.
 
 .. code-block:: properties
 
+    # optional, the global keystore can be used alternatively
     a1.channels.channel1.kafka.producer.ssl.keystore.location = /path/to/client.keystore.jks
     a1.channels.channel1.kafka.producer.ssl.keystore.password = <password to access the keystore>
+    # optional, the global keystore can be used alternatively
     a1.channels.channel1.kafka.consumer.ssl.keystore.location = /path/to/client.keystore.jks
     a1.channels.channel1.kafka.consumer.ssl.keystore.password = <password to access the keystore>
 
@@ -3381,11 +3751,13 @@ Example secure configuration using SASL_SSL:
     a1.channels.channel1.kafka.producer.security.protocol = SASL_SSL
     a1.channels.channel1.kafka.producer.sasl.mechanism = GSSAPI
     a1.channels.channel1.kafka.producer.sasl.kerberos.service.name = kafka
+    # optional, the global truststore can be used alternatively
     a1.channels.channel1.kafka.producer.ssl.truststore.location = /path/to/truststore.jks
     a1.channels.channel1.kafka.producer.ssl.truststore.password = <password to access the truststore>
     a1.channels.channel1.kafka.consumer.security.protocol = SASL_SSL
     a1.channels.channel1.kafka.consumer.sasl.mechanism = GSSAPI
     a1.channels.channel1.kafka.consumer.sasl.kerberos.service.name = kafka
+    # optional, the global truststore can be used alternatively
     a1.channels.channel1.kafka.consumer.ssl.truststore.location = /path/to/truststore.jks
     a1.channels.channel1.kafka.consumer.ssl.truststore.password = <password to access the truststore>
 
@@ -3909,7 +4281,7 @@ Example for agent named a1:
 
   a1.sinks.k1.type = hdfs
   a1.sinks.k1.channel = c1
-  a1.sinks.k1.hdfs.path = /flume/events/%y-%m-%d/%H%M/%S
+  a1.sinks.k1.hdfs.path = /flume/events/%Y-%m-%d/%H%M/%S
   a1.sinks.k1.serializer = avro_event
   a1.sinks.k1.serializer.compressionCodec = snappy
 
@@ -3996,7 +4368,7 @@ This interceptor can preserve an existing timestamp if it is already present in 
 Property Name     Default    Description
 ================  =========  ========================================================================
 **type**          --         The component type name, has to be ``timestamp`` or the FQCN
-header            timestamp  The name of the header in which to place the generated timestamp.
+headerName        timestamp  The name of the header in which to place the generated timestamp.
 preserveExisting  false      If the timestamp already exists, should it be preserved - true or false
 ================  =========  ========================================================================
 
@@ -4399,6 +4771,9 @@ The ``generateUniqId.sh`` will return ``1234`` with an exit code ``0``.
 Hadoop Credential Store Config Filter
 -------------------------------------
 
+A hadoop-common library needed on the classpath for this feature (2.6+ version).
+If hadoop is installed the agent adds it to the classpath automatically
+
 =============================================== ========== ==============================================
 Property Name                                   Default                        Description
 =============================================== ========== ==============================================
@@ -4432,7 +4807,7 @@ Log4J Appender
 
 Appends Log4j events to a flume agent's avro source. A client using this
 appender must have the flume-ng-sdk in the classpath (eg,
-flume-ng-sdk-1.9.0-SNAPSHOT.jar).
+flume-ng-sdk-1.10.0-SNAPSHOT.jar).
 Required properties are in **bold**.
 
 =====================  =======  ==================================================================================
@@ -4496,7 +4871,7 @@ Load Balancing Log4J Appender
 
 Appends Log4j events to a list of flume agent's avro source. A client using this
 appender must have the flume-ng-sdk in the classpath (eg,
-flume-ng-sdk-1.9.0-SNAPSHOT.jar). This appender supports a round-robin and random
+flume-ng-sdk-1.10.0-SNAPSHOT.jar). This appender supports a round-robin and random
 scheme for performing the load balancing. It also supports a configurable backoff
 timeout so that down agents are removed temporarily from the set of hosts
 Required properties are in **bold**.
@@ -4576,6 +4951,182 @@ Monitoring
 Monitoring in Flume is still a work in progress. Changes can happen very often.
 Several Flume components report metrics to the JMX platform MBean server. These
 metrics can be queried using Jconsole.
+
+Available Component Metrics
+---------------------------
+
+The following tables show what metrics are available for components. Each component only maintains a
+set of metrics, indicated by an 'x', the unmaintained ones show default values, that is 0.
+These tables tell you where you can expect meaningful data.
+The name of the metrics should be descriptive enough, for more information you have to dig into the
+source code of the components.
+
+Sources 1
+~~~~~~~~~
+
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+|                          | Avro | Exec | HTTP | JMS | Kafka | MultiportSyslogTCP | Scribe |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| AppendAcceptedCount      | x    |      |      |     |       |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| AppendBatchAcceptedCount | x    |      | x    | x   |       |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| AppendBatchReceivedCount | x    |      | x    | x   |       |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| AppendReceivedCount      | x    |      |      |     |       |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| ChannelWriteFail         | x    |      | x    | x   | x     | x                  | x      |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| EventAcceptedCount       | x    | x    | x    | x   | x     | x                  | x      |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| EventReadFail            |      |      | x    | x   | x     | x                  | x      |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| EventReceivedCount       | x    | x    | x    | x   | x     | x                  | x      |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| GenericProcessingFail    |      |      | x    |     |       | x                  |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| KafkaCommitTimer         |      |      |      |     | x     |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| KafkaEmptyCount          |      |      |      |     | x     |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| KafkaEventGetTimer       |      |      |      |     | x     |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+| OpenConnectionCount      | x    |      |      |     |       |                    |        |
++--------------------------+------+------+------+-----+-------+--------------------+--------+
+
+Sources 2
+~~~~~~~~~
+
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+|                          | SequenceGenerator | SpoolDirectory | SyslogTcp | SyslogUDP | Taildir | Thrift |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| AppendAcceptedCount      |                   |                |           |           |         | x      |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| AppendBatchAcceptedCount | x                 | x              |           |           | x       | x      |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| AppendBatchReceivedCount |                   | x              |           |           | x       | x      |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| AppendReceivedCount      |                   |                |           |           |         | x      |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| ChannelWriteFail         | x                 | x              | x         | x         | x       | x      |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| EventAcceptedCount       | x                 | x              | x         | x         | x       | x      |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| EventReadFail            |                   | x              | x         | x         | x       |        |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| EventReceivedCount       |                   | x              | x         | x         | x       | x      |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| GenericProcessingFail    |                   | x              |           |           | x       |        |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| KafkaCommitTimer         |                   |                |           |           |         |        |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| KafkaEmptyCount          |                   |                |           |           |         |        |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| KafkaEventGetTimer       |                   |                |           |           |         |        |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+| OpenConnectionCount      |                   |                |           |           |         |        |
++--------------------------+-------------------+----------------+-----------+-----------+---------+--------+
+
+Sinks 1
+~~~~~~~
+
++------------------------+-------------+------------+---------------+-------+--------+
+|                        | Avro/Thrift | AsyncHBase | ElasticSearch | HBase | HBase2 |
++------------------------+-------------+------------+---------------+-------+--------+
+| BatchCompleteCount     | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| BatchEmptyCount        | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| BatchUnderflowCount    | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| ChannelReadFail        | x           |            |               |       | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| ConnectionClosedCount  | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| ConnectionCreatedCount | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| ConnectionFailedCount  | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| EventDrainAttemptCount | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| EventDrainSuccessCount | x           | x          | x             | x     | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| EventWriteFail         | x           |            |               |       | x      |
++------------------------+-------------+------------+---------------+-------+--------+
+| KafkaEventSendTimer    |             |            |               |       |        |
++------------------------+-------------+------------+---------------+-------+--------+
+| RollbackCount          |             |            |               |       |        |
++------------------------+-------------+------------+---------------+-------+--------+
+
+Sinks 2
+~~~~~~~
+
++------------------------+-----------+------+------+-------+-----------+-------------+
+|                        | HDFSEvent | Hive | Http | Kafka | Morphline | RollingFile |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| BatchCompleteCount     | x         | x    |      |       | x         |             |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| BatchEmptyCount        | x         | x    |      | x     | x         |             |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| BatchUnderflowCount    | x         | x    |      | x     | x         |             |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| ChannelReadFail        | x         | x    | x    | x     | x         | x           |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| ConnectionClosedCount  | x         | x    |      |       |           | x           |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| ConnectionCreatedCount | x         | x    |      |       |           | x           |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| ConnectionFailedCount  | x         | x    |      |       |           | x           |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| EventDrainAttemptCount | x         | x    | x    |       | x         | x           |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| EventDrainSuccessCount | x         | x    | x    | x     | x         | x           |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| EventWriteFail         | x         | x    | x    | x     | x         | x           |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| KafkaEventSendTimer    |           |      |      | x     |           |             |
++------------------------+-----------+------+------+-------+-----------+-------------+
+| RollbackCount          |           |      |      | x     |           |             |
++------------------------+-----------+------+------+-------+-----------+-------------+
+
+Channels
+~~~~~~~~
+
++---------------------------------+------+-------+--------+-----------------+-----------------+
+|                                 | File | Kafka | Memory | PseudoTxnMemory | SpillableMemory |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| ChannelCapacity                 | x    |       | x      |                 | x               |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| ChannelSize                     | x    |       | x      | x               | x               |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| CheckpointBackupWriteErrorCount | x    |       |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| CheckpointWriteErrorCount       | x    |       |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| EventPutAttemptCount            | x    | x     | x      | x               | x               |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| EventPutErrorCount              | x    |       |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| EventPutSuccessCount            | x    | x     | x      | x               | x               |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| EventTakeAttemptCount           | x    | x     | x      | x               | x               |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| EventTakeErrorCount             | x    |       |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| EventTakeSuccessCount           | x    | x     | x      | x               | x               |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| KafkaCommitTimer                |      | x     |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| KafkaEventGetTimer              |      | x     |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| KafkaEventSendTimer             |      | x     |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| Open                            | x    |       |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| RollbackCounter                 |      | x     |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
+| Unhealthy                       | x    |       |        |                 |                 |
++---------------------------------+------+-------+--------+-----------------+-----------------+
 
 JMX Reporting
 -------------
@@ -4902,7 +5453,7 @@ quantifying how much data you generate. That is not always
 a simple task! Most data streams are bursty (for instance, due to diurnal
 patterns) and potentially unpredictable. A good starting point is to think
 about the maximum throughput you'll have in each tier of the topology, both
-in terms of *events per second* and *bytes per second*. Once you know the
+in terms of *events per second* and *bytes per second*. Once you know the
 required throughput of a given tier, you can calulate a lower bound on how many
 nodes you require for that tier. To determine attainable throughput, it's
 best to experiment with Flume on your hardware, using synthetic or sampled
@@ -4989,6 +5540,7 @@ org.apache.flume.Sink                                         logger            
 org.apache.flume.Sink                                         avro                    org.apache.flume.sink.AvroSink
 org.apache.flume.Sink                                         hdfs                    org.apache.flume.sink.hdfs.HDFSEventSink
 org.apache.flume.Sink                                         hbase                   org.apache.flume.sink.hbase.HBaseSink
+org.apache.flume.Sink                                         hbase2                  org.apache.flume.sink.hbase2.HBase2Sink
 org.apache.flume.Sink                                         asynchbase              org.apache.flume.sink.hbase.AsyncHBaseSink
 org.apache.flume.Sink                                         elasticsearch           org.apache.flume.sink.elasticsearch.ElasticSearchSink
 org.apache.flume.Sink                                         file_roll               org.apache.flume.sink.RollingFileSink
